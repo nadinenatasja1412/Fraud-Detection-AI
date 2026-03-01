@@ -1,10 +1,13 @@
-import { getFraudDecisionFromQwen, QwenFraudDecisionInput } from "./src/services/qwenService";
+import { AIService, QwenFraudDecisionInput } from "./src/services/ai.service"; // Pastikan path benar
 import * as dotenv from "dotenv";
 
 dotenv.config();
 
+// Inisialisasi Service
+const aiService = new AIService();
+
 async function runTest() {
-  console.log("--- Memulai Test Fraud Detection ---");
+  console.log("--- Memulai Test Fraud Detection (Paylabs RingShield) ---");
 
   // Simulasi data transaksi yang mencurigakan (Fraud Ring)
   const mockInput: QwenFraudDecisionInput = {
@@ -28,16 +31,26 @@ async function runTest() {
   };
 
   try {
-    const result = await getFraudDecisionFromQwen(mockInput);
+    // PERBAIKAN: Panggil method deepAnalysis dari instance aiService
+    const result = await aiService.deepAnalysis(mockInput);
     
-    console.log("--- HASIL DARI QWEN ---");
-    console.table(result); // Menampilkan hasil dalam bentuk tabel di console
+    console.log("\n--- HASIL ANALISIS AI ---");
+    console.log(`Risk Level: ${result.risk_level}`);
+    console.log(`Action    : ${result.recommended_action}`);
+    console.log(`Channel   : ${result.routing_suggestion || 'N/A'}`);
+    console.log(`Explanation: ${result.explanation}`);
+    
+    console.log("\n--- TABEL RESPONSE ---");
+    console.table(result); 
     
     if (result.risk_level === "HIGH" || result.risk_level === "CRITICAL") {
-        console.log("⚠️ Peringatan: Transaksi ini berisiko tinggi!");
+        console.log("\n⚠️  DETEKSI FRAUD: Transaksi ini otomatis diblokir atau butuh review!");
+    } else {
+        console.log("\n✅ Transaksi aman untuk diproses ke Paylabs.");
     }
+
   } catch (error) {
-    console.error("Test Gagal:", error);
+    console.error("❌ Test Gagal:", error);
   }
 }
 

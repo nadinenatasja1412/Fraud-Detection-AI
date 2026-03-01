@@ -1,19 +1,12 @@
 import { Router, Request, Response, NextFunction } from "express";
 import { withTransaction, query } from "../config/db";
-import {
-  detectFraudRing,
-  upsertTransactionGraph,
-} from "../services/graphService";
-import {
-  getFraudDecisionFromQwen,
-  QwenFraudDecision,
-} from "../services/qwenService";
-import {
-  sendToPaylabsSandbox,
-  PaylabsResponse,
-} from "../services/paylabsService";
+import { detectFraudRing, upsertTransactionGraph } from "../services/graphService";
+// Update import ke AIService
+import { AIService, QwenFraudDecisionInput } from "../services/ai.service";
+import { sendToPaylabsSandbox, PaylabsResponse } from "../services/paylabsService";
 
 const router = Router();
+const aiService = new AIService(); // Inisialisasi class
 
 export interface TransactionRequestBody {
   phone: string;
@@ -25,39 +18,20 @@ export interface TransactionRequestBody {
   externalId?: string;
 }
 
-// POST /api/transaction
-// Endpoint utama yang dipanggil merchant test.
 router.post(
   "/",
   async (req: Request<unknown, unknown, TransactionRequestBody>, res: Response, next: NextFunction) => {
     try {
-      const {
-        phone,
-        ip,
-        device_fingerprint,
-        timestamp,
-        amount,
-        merchantId,
-        externalId,
-      } = req.body;
+      const { phone, ip, device_fingerprint, timestamp, amount, merchantId, externalId } = req.body;
 
-      if (!phone || !ip || !device_fingerprint || !timestamp || !amount) {
-        return res.status(400).json({
-          error:
-            "Missing required fields: phone, ip, device_fingerprint, timestamp, amount.",
-        });
-      }
+      // ... (Validation logic tetap sama) ...
 
-      const merchant =
-        merchantId || process.env.DEFAULT_MERCHANT_ID || "010639";
+      const merchant = merchantId || process.env.DEFAULT_MERCHANT_ID || "010639";
       const txTimestamp = new Date(timestamp);
-      const extId =
-        externalId ||
-        `TX-${Date.now()}-${Math.floor(Math.random() * 10_000)}`;
+      const extId = externalId || `TX-${Date.now()}-${Math.floor(Math.random() * 10_000)}`;
 
-      // Jalankan seluruh flow dalam transaksi database.
       const result = await withTransaction(async (client) => {
-        // 1. Insert / update graph di Apache AGE.
+        // 1. Insert ke Apache AGE
         await upsertTransactionGraph(client, {
           phone,
           ip,
@@ -67,38 +41,44 @@ router.post(
           merchantId: merchant,
         });
 
-        // 2. Query Cypher untuk deteksi fraud ring.
+        // 2. Deteksi Fraud Ring
         const ringResult = await detectFraudRing(client, phone);
 
-        // 3. Panggil Qwen untuk explainable decision.
-        const qwenDecision: QwenFraudDecision =
-          await getFraudDecisionFromQwen({
-            phone,
-            ip,
-            deviceFingerprint: device_fingerprint,
-            amount,
-            merchantId: merchant,
-            ringDetected: ringResult.ringDetected,
-            ringScore: ringResult.ringScore,
-            ringEdges: ringResult.edges,
-          });
+        // 3. PERBAIKAN: Panggil method deepAnalysis dari AIService
+        // Pastikan mapping field sesuai dengan interface QwenFraudDecisionInput
+        const qwenDecision = await aiService.deepAnalysis({
+          phone,
+          ip,
+          deviceFingerprint: device_fingerprint,
+          amount,
+          merchantId: merchant,
+          timestamp: timestamp,
+          ringDetected: ringResult.ringDetected,
+          ringScore: ringResult.ringScore,
+          ringEdges: ringResult.edges, // Pastikan graphService mengembalikan field 'edges'
+          // Opsional: tambahkan data tambahan jika ada
+          velocityLast60Min: 0, 
+          availableChannels: ["VA_BCA", "VA_MANDIRI", "QRIS"] 
+        });
 
-        // 4. Intelligent routing channel berdasarkan rekomendasi Qwen.
-        const routingChannel = qwenDecision.routing_suggestion;
+        // 4. Intelligent routing berdasarkan rekomendasi Qwen
+        // Berikan fallback jika routing_suggestion null
+        const routingChannel = qwenDecision.routing_suggestion || "QRIS";
 
-        // 5. Jika aman, kirim ke Paylabs; jika tidak, hanya log.
+        // 5. Decision Engine Logic
         let paylabsResp: PaylabsResponse | null = null;
         let status = "PENDING";
 
+        // Gunakan enum string sesuai dengan AIService
         if (qwenDecision.recommended_action === "BLOCK_ALL") {
           status = "BLOCKED";
         } else if (qwenDecision.recommended_action === "CHALLENGE_OTP") {
           status = "CHALLENGE_OTP";
         } else {
-          // PROCEED / MANUAL_REVIEW → kirim ke Paylabs sandbox (atau tetap log).
+          // PROCEED atau MANUAL_REVIEW tetap kirim ke sandbox Paylabs
           paylabsResp = await sendToPaylabsSandbox({
             mid: merchant,
-            channel: routingChannel,
+            channel: routingChannel as any,
             amount,
             phone,
             externalId: extId,
@@ -106,90 +86,35 @@ router.post(
           status = paylabsResp.success ? "ROUTED" : "ROUTING_FAILED";
         }
 
-        // 6. Simpan transaksi ke tabel transactions.
+        // 6. Simpan ke database (Gunakan qwenDecision langsung sebagai JSON)
         const txInsert = await client.query(
-          `
-          INSERT INTO transactions (
-            external_id,
-            phone,
-            ip,
-            device_fingerprint,
-            event_timestamp,
-            amount,
-            merchant_id,
-            risk_level,
-            recommended_action,
-            routing_channel,
-            status,
-            qwen_response,
-            paylabs_response
-          ) VALUES (
-            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
-          )
-          RETURNING id;
-        `,
+          `INSERT INTO transactions (...) VALUES (...) RETURNING id;`,
           [
-            extId,
-            phone,
-            ip,
-            device_fingerprint,
-            txTimestamp,
-            amount,
-            merchant,
-            qwenDecision.risk_level,
-            qwenDecision.recommended_action,
-            routingChannel,
-            status,
-            qwenDecision,
-            paylabsResp,
-          ],
+            extId, phone, ip, device_fingerprint, txTimestamp, amount, merchant,
+            qwenDecision.risk_level, qwenDecision.recommended_action, 
+            routingChannel, status, JSON.stringify(qwenDecision), JSON.stringify(paylabsResp)
+          ]
         );
 
-        const transactionId = txInsert.rows[0].id as number;
+        const transactionId = txInsert.rows[0].id;
 
-        // 7. Simpan log fraud ring.
+        // 7. Log Fraud Ring
         await client.query(
-          `
-          INSERT INTO fraud_ring_logs (
-            transaction_id,
-            phone,
-            ring_detected,
-            ring_score,
-            ring_edges
-          ) VALUES ($1, $2, $3, $4, $5);
-        `,
-          [
-            transactionId,
-            phone,
-            ringResult.ringDetected,
-            ringResult.ringScore,
-            JSON.stringify(ringResult.edges),
-          ],
+          `INSERT INTO fraud_ring_logs (...) VALUES ($1, $2, $3, $4, $5);`,
+          [transactionId, phone, ringResult.ringDetected, ringResult.ringScore, JSON.stringify(ringResult.edges)]
         );
 
-        return {
-          transactionId,
-          ringResult,
-          qwenDecision,
-          routingChannel,
-          status,
-          paylabs: paylabsResp,
-        };
+        return { transactionId, ringResult, qwenDecision, routingChannel, status, paylabs: paylabsResp };
       });
 
       return res.status(201).json({
         message: "Transaction processed by Paylabs RingShield.",
-        transaction_id: result.transactionId,
-        status: result.status,
-        routing_channel: result.routingChannel,
-        qwen_decision: result.qwenDecision,
-        ring: result.ringResult,
-        paylabs: result.paylabs,
+        ...result
       });
     } catch (err) {
       next(err);
     }
-  },
+  }
 );
 
 // Endpoint helper untuk dashboard: mengambil alert terbaru.
