@@ -6,8 +6,6 @@ import { initDatabase } from "./config/db";
 
 dotenv.config();
 
-// Membuat Express app dengan semua middleware dan routes.
-// Create the Express app with all middlewares and routes.
 export function createApp() {
   const app = express();
 
