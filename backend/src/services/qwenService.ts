@@ -11,11 +11,16 @@ export type RecommendedAction =
 export type RoutingChannel = "VA_BCA" | "VA_MANDIRI" | "QRIS" | "PAYLATER";
 
 export interface QwenFraudDecisionInput {
+  // Data utama transaksi
+  transactionId?: string;
   phone: string;
   ip: string;
   deviceFingerprint: string;
   amount: number;
   merchantId: string;
+  timestamp?: string;
+
+  // Hasil analisis graph / ring
   ringDetected: boolean;
   ringScore: number;
   ringEdges: Array<{
@@ -24,6 +29,14 @@ export interface QwenFraudDecisionInput {
     relation: string;
     score: number | null;
   }>;
+
+  // Metadata tambahan untuk prompt baru (opsional)
+  deviceMatchPercent?: number;
+  ipCluster?: string;
+  fraudRiskScore?: number; // 0-100 dari Fraud Detection / internal scoring
+  graphSummary?: string;
+  velocityLast60Min?: number;
+  availableChannels?: string[]; // contoh: ["BCA VA","Mandiri VA","QRIS Dana","PayLater Akulaku"]
 }
 
 export interface QwenFraudDecision {
@@ -50,37 +63,77 @@ export async function getFraudDecisionFromQwen(
     );
   }
 
+  // Siapkan data turunan untuk prompt yang lebih kaya
+  const txId = input.transactionId ?? "N/A";
+  const amount = input.amount.toFixed(2);
+  const timestamp = input.timestamp ?? new Date().toISOString();
+  const merchantId = input.merchantId;
+  const phone1 = input.phone;
+
+  const linkedPhonesSet = new Set<string>();
+  input.ringEdges.forEach((e) => {
+    if (e.source !== phone1) linkedPhonesSet.add(e.source);
+    if (e.target !== phone1) linkedPhonesSet.add(e.target);
+  });
+  const linkedPhones =
+    linkedPhonesSet.size > 0 ? Array.from(linkedPhonesSet).join(", ") : "Tidak ada";
+
+  const deviceMatch = input.deviceMatchPercent ?? 0;
+  const ipCluster = input.ipCluster ?? "Unknown cluster";
+  const riskScore = input.fraudRiskScore ?? Math.min(Math.round(input.ringScore), 100);
+
+  const graphSummary =
+    input.graphSummary ??
+    (input.ringDetected && input.ringEdges.length > 0
+      ? `Terdapat ${input.ringEdges.length} hubungan antar nomor melalui ${[
+          ...new Set(input.ringEdges.map((e) => e.relation)),
+        ].join(", ")}`
+      : "Tidak ada hubungan ring yang signifikan");
+
+  const velocity = input.velocityLast60Min ?? 0;
+  const channels =
+    input.availableChannels && input.availableChannels.length > 0
+      ? input.availableChannels.join(", ")
+      : "BCA VA, Mandiri VA, QRIS, PayLater";
+
   const systemPrompt = `
-Anda adalah engine fraud detection untuk payment gateway di Indonesia.
-Tugas Anda:
-- Menilai risiko transaksi berdasarkan metadata dan informasi ring graph (fraud ring).
-- Mengeluarkan keputusan dalam format JSON SAJA, tanpa teks lain.
-- Bahasa penjelasan WAJIB Bahasa Indonesia, jelas dan singkat.
+You are an expert fraud risk analyst and intelligent payment routing agent at Paylabs, a leading Indonesian payment gateway. Your role is to analyze transaction data, detect fraud rings (especially money mule networks and phone rotation), provide clear explanations in Bahasa Indonesia, and recommend the best routing decision.
 
-Field JSON yang WAJIB:
-- "risk_level": salah satu dari ["LOW","MEDIUM","HIGH","CRITICAL"]
-- "explanation": teks Bahasa Indonesia yang menjelaskan alasan utama.
-- "recommended_action": salah satu dari ["PROCEED","CHALLENGE_OTP","BLOCK_ALL","MANUAL_REVIEW"]
-- "routing_suggestion": salah satu dari ["VA_BCA","VA_MANDIRI","QRIS","PAYLATER"]
+Input data:
+- Transaction ID: ${txId}
+- Amount: Rp ${amount}
+- Timestamp: ${timestamp}
+- Merchant ID: ${merchantId}
+- User Phone: ${phone1}
+- Linked Phones: ${linkedPhones} (comma-separated)
+- Device Fingerprint Match: ${deviceMatch}% across linked users
+- IP Cluster: ${ipCluster} (e.g., same subnet Jakarta Selatan)
+- Risk Score from Fraud Detection: ${riskScore}/100
+- Graph Path: ${graphSummary}
+- Historical Velocity: ${velocity} transaksi in last 60 minutes
+- Channel Available: ${channels}
 
-Pertimbangkan:
-- Phone / device / IP yang berulang dalam waktu singkat.
-- Hubungan dengan phone lain melalui shared device / IP / transfer hop.
-- Jumlah ringScore: semakin tinggi semakin berisiko.
-- Konteks merchant payment Indonesia (VA, QRIS, PayLater).
+Instructions:
+1. Analyze for fraud ring signs: phone rotation, shared device/IP, mule layering (quick transfers), velocity spike, location anomaly.
+2. Classify risk level: Low (<50), Medium (50-80), High (>80).
+3. Provide short, clear explanation in Bahasa Indonesia (max 100 words).
+4. Recommend action:
+   - Block All
+   - Challenge OTP / 3DS
+   - Manual Review
+   - Proceed with Smart Routing (pilih channel terbaik: least cost + high success + low fraud risk)
+5. If proceed, suggest best channel from available and why.
+6. Output strictly in JSON format.
 
-Selalu kembalikan output yang valid JSON dan mudah di-parse.
+Output JSON example:
+{
+  "risk_level": "High",
+  "explanation": "Ring terdeteksi: Nomor ${phone1} dan salah satu linked phone terhubung via device fingerprint ${deviceMatch}% match + transfer cepat Rp${amount} dalam 20 menit. Pola money mule klasik.",
+  "recommended_action": "Block All",
+  "routing_suggestion": null,
+  "confidence": 92
+}
 `;
-
-  const userContent = {
-    role: "user",
-    content: [
-      {
-        role: "user",
-        content: `Berikut data transaksi dan graph ring:\n${JSON.stringify(input, null, 2)}\n\nBerikan keputusan JSON sesuai spesifikasi.`,
-      },
-    ],
-  };
 
   try {
     const response = await axios.post(
@@ -90,7 +143,6 @@ Selalu kembalikan output yang valid JSON dan mudah di-parse.
         input: {
           messages: [
             { role: "system", content: systemPrompt },
-            { role: "user", content: JSON.stringify(userContent) },
           ],
         },
         parameters: {
@@ -123,7 +175,6 @@ Selalu kembalikan output yang valid JSON dan mudah di-parse.
     return parsed;
   } catch (err) {
     console.error("[Qwen] Error calling Qwen API:", err);
-    // Fallback konservatif jika Qwen gagal: HIGH risk & manual review.
     const fallback: QwenFraudDecision = {
       risk_level: "HIGH",
       explanation:
