@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Paylabs RingShield - Fraud Ring Detector</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdn.jsdelivr.net/npm/vis-network@10.0.0/standalone/umd/vis-network.min.js"></script>
+</head>
+<body>
+  <header class="header">
+    <div class="logo">Paylabs <span class="product">RingShield - Fraud Ring Detector</span></div>
+    <div class="header-actions">
+      <button type="button" class="icon-btn" title="Notifikasi">🔔</button>
+      <button type="button" class="icon-btn" title="Pesan">💬</button>
+      <button type="button" class="icon-btn" title="Laporan">📊</button>
+      <select class="header-select">
+        <option>Merchant</option>
+      </select>
+    </div>
+  </header>
+
+  <div class="controls">
+    <button type="button" class="btn-primary active">Real-time Monitoring</button>
+    <select id="dateRange" class="filter-select">
+      <option>Date Range</option>
+      <option>Last 24h</option>
+      <option>Last 7 days</option>
+    </select>
+    <select id="riskThreshold" class="filter-select">
+      <option>Risk Threshold</option>
+      <option>High (80+)</option>
+      <option>Medium (50+)</option>
+      <option>Low (all)</option>
+    </select>
+    <select id="phonePrefix" class="filter-select">
+      <option>Phone Prefix</option>
+    </select>
+    <button type="button" class="btn-secondary">Filter</button>
+  </div>
+
+  <main class="dashboard">
+    <section class="graph-panel">
+      <div class="panel-head">
+        <h2>Force-Directed Graph</h2>
+        <span id="graphStatus" class="status-badge">0%</span>
+      </div>
+      <div id="graph" class="graph-container"></div>
+      <div class="graph-metrics">
+        <span class="metric">Shared Device <strong id="metricDevice">0%</strong></span>
+        <span class="metric">Same IP Subnet</span>
+        <span class="metric">Phone Rotation</span>
+      </div>
+      <div class="risk-bar">
+        <span class="risk-seg high">High</span>
+        <span class="risk-seg medium">Medium</span>
+        <span class="risk-seg low">Low</span>
+      </div>
+    </section>
+
+    <aside class="side-panels">
+      <div class="panel alerts-panel">
+        <div class="panel-head">
+          <h2>Live Alerts</h2>
+          <button type="button" class="btn-small">Live Alerts</button>
+        </div>
+        <div id="alertsFeed" class="alerts-feed"></div>
+      </div>
+      <div class="panel insight-panel">
+        <div class="panel-head">
+          <h2>Qwen Insight</h2>
+          <button type="button" class="btn-small">Qwen AI</button>
+        </div>
+        <div id="insightContent" class="insight-content">
+          <p class="insight-text">Menunggu analisis transaksi...</p>
+          <p id="insightRecommendation" class="insight-recommendation"></p>
+        </div>
+        <div class="insight-actions">
+          <button type="button" id="btnBlockAll" class="btn-action danger">Block All</button>
+          <button type="button" id="btnChallengeOTP" class="btn-action warning">Challenge OTP</button>
+          <button type="button" id="btnProceed" class="btn-action primary">Proceed</button>
+        </div>
+      </div>
+    </aside>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

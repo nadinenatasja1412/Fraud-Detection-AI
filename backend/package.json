@@ -1,0 +1,28 @@
+{
+  "name": "paylabs-ringshield-backend",
+  "version": "1.0.0",
+  "description": "Paylabs RingShield - Intelligent Transaction Routing + Fraud Ring Detection backend (Node.js + TypeScript + PolarDB/AGE + Qwen + Paylabs)",
+  "main": "dist/server.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "dev": "ts-node src/server.ts"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "axios": "^1.7.7",
+    "crypto": "^1.0.1",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "pg": "^8.13.1",
+    "vis-network": "^9.1.9"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.9.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.6.3"
+  }
+}
