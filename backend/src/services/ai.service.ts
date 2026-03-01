@@ -1,5 +1,8 @@
 import OpenAI from 'openai';
 import { Router, Request, Response } from 'express';
+import dotenv from "dotenv";
+import path from "path";
+dotenv.config({ path: path.resolve(__dirname, "../../.env") });
 
 // --- Types & Interfaces ---
 export type RiskLevel = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
@@ -40,11 +43,19 @@ export interface QwenFraudDecision {
 
 // --- Service Class ---
 export class AIService {
-  private openai: OpenAI;
+private openai: OpenAI;
 
   constructor() {
+    // Ambil API Key dari environment
+    const apiKey = process.env.DASHSCOPE_API_KEY;
+
+    if (!apiKey) {
+      // Ini akan membantu kamu mendeteksi jika .env tidak terbaca
+      console.error("❌ ERROR: DASHSCOPE_API_KEY tidak ditemukan di .env");
+    }
+
     this.openai = new OpenAI({
-      apiKey: process.env.DASHSCOPE_API_KEY,
+      apiKey: apiKey || "dummy-key", // Fallback agar tidak crash saat inisialisasi
       baseURL: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
     });
   }
