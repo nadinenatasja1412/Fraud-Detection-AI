@@ -12,7 +12,7 @@ export const pool = new Pool({
   // Pastikan SSL dikonfigurasi dengan benar untuk Cloud DB (PolarDB)
   ssl: process.env.DB_SSL === 'true' 
   ? { rejectUnauthorized: false } 
-  : false,,
+  : false,
   max: 20,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 10000,
@@ -30,13 +30,12 @@ export interface FraudRingEdge {
 const AGE_GRAPH_NAME = process.env.AGE_GRAPH_NAME || "fraud_ring_graph";
 
 //
-export async function query<T = any>(
+export async function query<T extends QueryResultRow = any>(
   text: string,
-  params: any[] = [] // Tambahkan default value array kosong di sini
+  params: any[] = [], // Gunakan default array kosong untuk menghindari error undefined
 ): Promise<QueryResult<T>> {
   return pool.query<T>(text, params);
 }
-
 // Helper untuk menjalankan blok dalam transaksi.
 export async function withTransaction<T>(
   fn: (client: DbClient) => Promise<T>,
@@ -150,3 +149,18 @@ export async function initDatabase(): Promise<void> {
         id BIGSERIAL PRIMARY KEY,
         transaction_id BIGINT REFERENCES transactions(id) ON DELETE CASCADE,
         phone VARCHAR(64),
+        ring_detected BOOLEAN,
+        ring_score NUMERIC,
+        ring_edges JSONB,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+
+    console.log("[INFO] Database & Graph Schema initialized successfully.");
+  } catch (error) {
+    console.error("[ERROR] Database initialization failed:", error);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
